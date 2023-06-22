@@ -4,8 +4,15 @@
 #
 # Author: muxator
 
-FROM node:14-buster-slim
+FROM node:lts-slim
 LABEL maintainer="Etherpad team, https://github.com/ether/etherpad-lite"
+
+ARG TIMEZONE=
+RUN \
+  [ -z "${TIMEZONE}" ] || { \
+    ln -sf /usr/share/zoneinfo/"${TIMEZONE#/usr/share/zoneinfo/}" /etc/localtime; \
+    dpkg-reconfigure -f noninteractive tzdata; \
+  }
 
 # plugins to install while building the container. By default no plugins are
 # installed.
@@ -55,12 +62,20 @@ RUN groupadd --system ${EP_GID:+--gid "${EP_GID}" --non-unique} etherpad && \
 ARG EP_DIR=/opt/etherpad-lite
 RUN mkdir -p "${EP_DIR}" && chown etherpad:etherpad "${EP_DIR}"
 
-# install abiword for DOC/PDF/ODT export
-RUN [ -z "${INSTALL_ABIWORD}" ] || (apt update && apt -y install abiword && apt clean && rm -rf /var/lib/apt/lists/*)
-
-# install libreoffice for DOC/PDF/ODT export
-# the mkdir is needed for configuration of openjdk-11-jre-headless, see https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=863199
-RUN [ -z "${INSTALL_SOFFICE}" ] || (apt update && mkdir -p /usr/share/man/man1 && apt -y install libreoffice && apt clean && rm -rf /var/lib/apt/lists/*)
+# the mkdir is needed for configuration of openjdk-11-jre-headless, see
+# https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=863199
+RUN export DEBIAN_FRONTEND=noninteractive; \
+    mkdir -p /usr/share/man/man1 && \
+    apt-get -qq update && \
+    apt-get -qq dist-upgrade && \
+    apt-get -qq --no-install-recommends install \
+        ca-certificates \
+        git \
+        ${INSTALL_ABIWORD:+abiword} \
+        ${INSTALL_SOFFICE:+libreoffice default-jre libreoffice-java-common} \
+        && \
+    apt-get -qq clean && \
+    rm -rf /var/lib/apt/lists/*
 
 USER etherpad
 
@@ -68,11 +83,18 @@ WORKDIR "${EP_DIR}"
 
 COPY --chown=etherpad:etherpad ./ ./
 
-# install node dependencies for Etherpad
-RUN src/bin/installDeps.sh && \
-	rm -rf ~/.npm/_cacache
-
-RUN [ -z "${ETHERPAD_PLUGINS}" ] || npm install ${ETHERPAD_PLUGINS}
+# Plugins must be installed before installing Etherpad's dependencies, otherwise
+# npm will try to hoist common dependencies by removing them from
+# src/node_modules and installing them in the top-level node_modules. As of
+# v6.14.10, npm's hoist logic appears to be buggy, because it sometimes removes
+# dependencies from src/node_modules but fails to add them to the top-level
+# node_modules. Even if npm correctly hoists the dependencies, the hoisting
+# seems to confuse tools such as `npm outdated`, `npm update`, and some ESLint
+# rules.
+RUN { [ -z "${ETHERPAD_PLUGINS}" ] || \
+      npm install --no-save --legacy-peer-deps ${ETHERPAD_PLUGINS}; } && \
+    src/bin/installDeps.sh && \
+    rm -rf ~/.npm
 
 # Copy the configuration file.
 COPY --chown=etherpad:etherpad ./settings.json.docker "${EP_DIR}"/settings.json
@@ -80,5 +102,11 @@ COPY --chown=etherpad:etherpad ./settings.json.docker "${EP_DIR}"/settings.json
 # Fix group permissions
 RUN chmod -R g=u .
 
+USER root
+RUN cd src && npm link
+USER etherpad
+
+HEALTHCHECK --interval=20s --timeout=3s CMD ["etherpad-healthcheck"]
+
 EXPOSE 9001
-CMD ["node", "src/node/server.js"]
+CMD ["etherpad"]

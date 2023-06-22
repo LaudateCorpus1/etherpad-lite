@@ -9,6 +9,7 @@ const childProcess = require('child_process');
 const log4js = require('log4js');
 const path = require('path');
 const semver = require('semver');
+const {exec} = require("child_process");
 
 log4js.replaceConsole();
 
@@ -76,6 +77,15 @@ const assertUpstreamOk = (branch, opts = {}) => {
   }
 };
 
+// Check if asciidoctor is installed
+exec('asciidoctor -v', (err,stdout)=>{
+  if (err){
+    console.log('Please install asciidoctor')
+    console.log('https://asciidoctor.org/docs/install-toolchain/')
+    process.exit(1)
+  }
+});
+
 const dirExists = (dir) => {
   try {
     return fs.statSync(dir).isDirectory();
@@ -132,9 +142,9 @@ try {
 
   // Many users will be using the latest LTS version of npm, and the latest LTS version of npm uses
   // lockfileVersion 1. Enforce v1 so that users don't see a (benign) compatibility warning.
-  if (readJson('./src/package-lock.json').lockfileVersion !== 1) {
-    throw new Error('Please regenerate package-lock.json with npm v6.x.');
-  }
+  const pkglock = readJson('./src/package-lock.json');
+  pkglock.lockfileVersion = 1;
+  writeJson('./src/package-lock.json', pkglock);
 
   run('git add src/package.json');
   run('git add src/package-lock.json');
@@ -168,7 +178,7 @@ try {
 
 try {
   console.log('Building documentation...');
-  run('make docs');
+  run('node ./make_docs.js');
   console.log('Updating ether.github.com master branch...');
   run('git pull --ff-only', {cwd: '../ether.github.com/'});
   console.log('Committing documentation...');

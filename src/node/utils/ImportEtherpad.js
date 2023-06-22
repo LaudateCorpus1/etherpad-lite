@@ -1,5 +1,5 @@
-// 'use strict';
-// Uncommenting above breaks tests.
+'use strict';
+
 /**
  * 2014 John McLear (Etherpad Foundation / McLear Ltd)
  *
@@ -16,14 +16,19 @@
  * limitations under the License.
  */
 
+const AttributePool = require('../../static/js/AttributePool');
+const {Pad} = require('../db/Pad');
+const Stream = require('./Stream');
+const authorManager = require('../db/AuthorManager');
 const db = require('../db/DB');
 const hooks = require('../../static/js/pluginfw/hooks');
 const log4js = require('log4js');
 const supportedElems = require('../../static/js/contentcollector').supportedElems;
+const ueberdb = require('ueberdb2');
 
 const logger = log4js.getLogger('ImportEtherpad');
 
-exports.setPadRaw = (padId, r) => {
+exports.setPadRaw = async (padId, r, authorId = '') => {
   const records = JSON.parse(r);
 
   // get supported block Elements from plugins, we will use this later.
@@ -31,72 +36,86 @@ exports.setPadRaw = (padId, r) => {
     supportedElems.add(element);
   });
 
-  const unsupportedElements = new Set();
+  // DB key prefixes for pad records. Each key is expected to have the form `${prefix}:${padId}` or
+  // `${prefix}:${padId}:${otherstuff}`.
+  const padKeyPrefixes = [
+    ...await hooks.aCallAll('exportEtherpadAdditionalContent'),
+    'pad',
+  ];
 
-  Object.keys(records).forEach(async (key) => {
-    let value = records[key];
+  let originalPadId = null;
+  const checkOriginalPadId = (padId) => {
+    if (originalPadId == null) originalPadId = padId;
+    if (originalPadId !== padId) throw new Error('unexpected pad ID in record');
+  };
 
-    if (!value) {
-      return;
-    }
+  // First validate and transform values. Do not commit any records to the database yet in case
+  // there is a problem with the data.
 
-    let newKey;
-
-    if (value.padIDs) {
-      // Author data - rewrite author pad ids
-      value.padIDs[padId] = 1;
-      newKey = key;
-
-      // Does this author already exist?
-      const author = await db.get(key);
-
-      if (author) {
-        // Yes, add the padID to the author
-        if (Object.prototype.toString.call(author) === '[object Array]') {
-          author.padIDs.push(padId);
+  const data = new Map();
+  const existingAuthors = new Set();
+  const padDb = new ueberdb.Database('memory', {data});
+  await padDb.init();
+  try {
+    const processRecord = async (key, value) => {
+      if (!value) return;
+      const keyParts = key.split(':');
+      const [prefix, id] = keyParts;
+      if (prefix === 'globalAuthor' && keyParts.length === 2) {
+        // In the database, the padIDs subkey is an object (which is used as a set) that records
+        // every pad the author has worked on. When exported, that object becomes a single string
+        // containing the exported pad's ID.
+        if (typeof value.padIDs !== 'string') {
+          throw new TypeError('globalAuthor padIDs subkey is not a string');
         }
-
-        value = author;
+        checkOriginalPadId(value.padIDs);
+        if (await authorManager.doesAuthorExist(id)) {
+          existingAuthors.add(id);
+          return;
+        }
+        value.padIDs = {[padId]: 1};
+      } else if (padKeyPrefixes.includes(prefix)) {
+        checkOriginalPadId(id);
+        if (prefix === 'pad' && keyParts.length === 2) {
+          const pool = new AttributePool().fromJsonable(value.pool);
+          const unsupportedElements = new Set();
+          pool.eachAttrib((k, v) => {
+            if (!supportedElems.has(k)) unsupportedElements.add(k);
+          });
+          if (unsupportedElements.size) {
+            logger.warn(`(pad ${padId}) unsupported attributes (try installing a plugin): ` +
+                        `${[...unsupportedElements].join(', ')}`);
+          }
+        }
+        keyParts[1] = padId;
+        key = keyParts.join(':');
       } else {
-        // No, create a new array with the author info in
-        value.padIDs = [padId];
+        logger.debug(`(pad ${padId}) The record with the following key will be ignored unless an ` +
+                     `importEtherpad hook function processes it: ${key}`);
+        return;
       }
-    } else {
-      // Not author data, probably pad data
-      // we can split it to look to see if it's pad data
+      await padDb.set(key, value);
+    };
+    const readOps = new Stream(Object.entries(records)).map(([k, v]) => processRecord(k, v));
+    for (const op of readOps.batch(100).buffer(99)) await op;
 
-      // is this an attribute we support or not?  If not, tell the admin
-      if (value.pool) {
-        for (const attrib of Object.keys(value.pool.numToAttrib)) {
-          const attribName = value.pool.numToAttrib[attrib][0];
-          if (!supportedElems.has(attribName)) unsupportedElements.add(attribName);
-        }
-      }
-      const oldPadId = key.split(':');
-
-      // we know it's pad data
-      if (oldPadId[0] === 'pad') {
-        // so set the new pad id for the author
-        oldPadId[1] = padId;
-
-        // and create the value
-        newKey = oldPadId.join(':'); // create the new key
-      }
-
-      // is this a key that is supported through a plugin?
-      // get content that has a different prefix IE comments:padId:foo
-      // a plugin would return something likle ['comments', 'cakes']
-      for (const prefix of await hooks.aCallAll('exportEtherpadAdditionalContent')) {
-        if (prefix === oldPadId[0]) newKey = `${prefix}:${padId}`;
-      }
-    }
-
-    // Write the value to the server
-    await db.set(newKey, value);
-  });
-
-  if (unsupportedElements.size) {
-    logger.warn('Ignoring unsupported elements (you might want to install a plugin): ' +
-                `${[...unsupportedElements].join(', ')}`);
+    const pad = new Pad(padId, padDb);
+    await pad.init(null, authorId);
+    await hooks.aCallAll('importEtherpad', {
+      pad,
+      // Shallow freeze meant to prevent accidental bugs. It would be better to deep freeze, but
+      // it's not worth the added complexity.
+      data: Object.freeze(records),
+      srcPadId: originalPadId,
+    });
+    await pad.check();
+  } finally {
+    await padDb.close();
   }
+
+  const writeOps = (function* () {
+    for (const [k, v] of data) yield db.set(k, v);
+    for (const a of existingAuthors) yield authorManager.addPad(a, padId);
+  })();
+  for (const op of new Stream(writeOps).batch(100).buffer(99)) await op;
 };

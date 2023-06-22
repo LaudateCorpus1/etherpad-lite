@@ -1,7 +1,296 @@
-# Next release
+# 1.9.0
+
+### Notable enhancements and fixes
+
+* Windows build:
+  * The bundled `node.exe` was upgraded from v12 to v16.
+  * The bundled `node.exe` is now a 64-bit executable. If you need the 32-bit
+    version you must download and install Node.js yourself.
+* Improvements to login session management:
+  * `express_sid` cookies and `sessionstorage:*` database records are no longer
+    created unless `requireAuthentication` is `true` (or a plugin causes them to
+    be created).
+  * Login sessions now have a finite lifetime by default (10 days after
+    leaving).
+  * `sessionstorage:*` database records are automatically deleted when the login
+    session expires (with some exceptions that will be fixed in the future).
+  * Requests for static content (e.g., `/robots.txt`) and special pages (e.g.,
+    the HTTP API, `/stats`) no longer create login session state.
+* The following settings from `settings.json` are now applied as expected (they
+  were unintentionally ignored before):
+  * `padOptions.lang`
+  * `padOptions.showChat`
+  * `padOptions.userColor`
+  * `padOptions.userName`
+* HTTP API:
+  * Fixed the return value of `getText` when called with a specific revision.
+  * Fixed a potential attribute pool corruption bug with
+    `copyPadWithoutHistory`.
+  * Mappings created by `createGroupIfNotExistsFor` are now removed from the
+    database when the group is deleted.
+  * Fixed race conditions in the `setText`, `appendText`, and `restoreRevision`
+    functions.
+  * Added an optional `authorId` parameter to `appendText`,
+    `copyPadWithoutHistory`, `createGroupPad`, `createPad`, `restoreRevision`,
+    `setHTML`, and `setText`, and bumped the latest API version to 1.3.0.
+* Fixed a crash if the database is busy enough to cause a query timeout.
+* New `/health` endpoint for getting information about Etherpad's health (see
+  [draft-inadarei-api-health-check-06](https://www.ietf.org/archive/id/draft-inadarei-api-health-check-06.html)).
+* Docker now uses the new `/health` endpoint for health checks, which avoids
+  issues when authentication is enabled. It also avoids the unnecessary creation
+  of database records for managing browser sessions.
+* When copying a pad, the pad's records are copied in batches to avoid database
+  timeouts with large pads.
+* Exporting a large pad to `.etherpad` format should be faster thanks to bulk
+  database record fetches.
+* When importing an `.etherpad` file, records are now saved to the database in
+  batches to avoid database timeouts with large pads.
+
+#### For plugin authors
+
+* New `expressPreSession` server-side hook.
+* Pad server-side hook changes:
+  * `padCheck`: New hook.
+  * `padCopy`: New `srcPad` and `dstPad` context properties.
+  * `padDefaultContent`: New hook.
+  * `padRemove`: New `pad` context property.
+* The `db` property on Pad objects is now public.
+* New `getAuthorId` server-side hook.
+* New APIs for processing attributes: `ep_etherpad-lite/static/js/attributes`
+  (low-level API) and `ep_etherpad-lite/static/js/AttributeMap` (high-level
+  API).
+* The `import` server-side hook has a new `ImportError` context property.
+* New `exportEtherpad` and `importEtherpad` server-side hooks.
+* The `handleMessageSecurity` and `handleMessage` server-side hooks have a new
+  `sessionInfo` context property that includes the user's author ID, the pad ID,
+  and whether the user only has read-only access.
+* The `handleMessageSecurity` server-side hook can now be used to grant write
+  access for the current message only.
+* The `init_<pluginName>` server-side hooks have a new `logger` context
+  property that plugins can use to log messages.
+* Prevent infinite loop when exiting the server
+* Bump dependencies
+
 
 ### Compatibility changes
 
+* Node.js v14.15.0 or later is now required.
+* The default login session expiration (applicable if `requireAuthentication` is
+  `true`) changed from never to 10 days after the user leaves.
+
+#### For plugin authors
+
+* The `client` context property for the `handleMessageSecurity` and
+  `handleMessage` server-side hooks is deprecated; use the `socket` context
+  property instead.
+* Pad server-side hook changes:
+  * `padCopy`:
+    * The `originalPad` context property is deprecated; use `srcPad` instead.
+    * The `destinationID` context property is deprecated; use `dstPad.id`
+      instead.
+  * `padCreate`: The `author` context property is deprecated; use the new
+    `authorId` context property instead. Also, the hook now runs asynchronously.
+  * `padLoad`: Now runs when a temporary Pad object is created during import.
+    Also, it now runs asynchronously.
+  * `padRemove`: The `padID` context property is deprecated; use `pad.id`
+    instead.
+  * `padUpdate`: The `author` context property is deprecated; use the new
+    `authorId` context property instead. Also, the hook now runs asynchronously.
+* Returning `true` from a `handleMessageSecurity` hook function is deprecated;
+  return `'permitOnce'` instead.
+* Changes to the `src/static/js/Changeset.js` library:
+  * The following attribute processing functions are deprecated (use the new
+    attribute APIs instead):
+    * `attribsAttributeValue()`
+    * `eachAttribNumber()`
+    * `makeAttribsString()`
+    * `opAttributeValue()`
+  * `opIterator()`: Deprecated in favor of the new `deserializeOps()` generator
+    function.
+  * `appendATextToAssembler()`: Deprecated in favor of the new `opsFromAText()`
+    generator function.
+  * `newOp()`: Deprecated in favor of the new `Op` class.
+* The `AuthorManager.getAuthor4Token()` function is deprecated; use the new
+  `AuthorManager.getAuthorId()` function instead.
+* The exported database records covered by the `exportEtherpadAdditionalContent`
+  server-side hook now include keys like `${customPrefix}:${padId}:*`, not just
+  `${customPrefix}:${padId}`.
+* Plugin locales should overwrite core's locales Stale
+* Plugin locales overwrite core locales
+
+# 1.8.18
+
+Released: 2022-05-05
+
+### Notable enhancements and fixes
+
+  * Upgraded ueberDB to fix a regression with CouchDB.
+
+# 1.8.17
+
+Released: 2022-02-23
+
+### Security fixes
+
+* Fixed a vunlerability in the `CHANGESET_REQ` message handler that allowed a
+  user with any access to read any pad if the pad ID is known.
+
+### Notable enhancements and fixes
+
+* Fixed a bug that caused all pad edit messages received at the server to go
+  through a single queue. Now there is a separate queue per pad as intended,
+  which should reduce message processing latency when many pads are active at
+  the same time.
+
+# 1.8.16
+
+### Security fixes
+
+If you cannot upgrade to v1.8.16 for some reason, you are encouraged to try
+cherry-picking the fixes to the version you are running:
+
+```shell
+git cherry-pick b7065eb9a0ec..77bcb507b30e
+```
+
+* Maliciously crafted `.etherpad` files can no longer overwrite arbitrary
+  non-pad database records when imported.
+* Imported `.etherpad` files are now subject to numerous consistency checks
+  before any records are written to the database. This should help avoid
+  denial-of-service attacks via imports of malformed `.etherpad` files.
+
+### Notable enhancements and fixes
+
+* Fixed several `.etherpad` import bugs.
+* Improved support for large `.etherpad` imports.
+
+# 1.8.15
+
+### Security fixes
+
+* Fixed leak of the writable pad ID when exporting from the pad's read-only ID.
+  This only matters if you treat the writeable pad IDs as secret (e.g., you are
+  not using [ep_padlist2](https://www.npmjs.com/package/ep_padlist2)) and you
+  share the pad's read-only ID with untrusted users. Instead of treating
+  writeable pad IDs as secret, you are encouraged to take advantage of
+  Etherpad's authentication and authorization mechanisms (e.g., use
+  [ep_openid_connect](https://www.npmjs.com/package/ep_openid_connect) with
+  [ep_readonly_guest](https://www.npmjs.com/package/ep_readonly_guest), or write
+  your own
+  [authentication](https://etherpad.org/doc/v1.8.14/#index_authenticate) and
+  [authorization](https://etherpad.org/doc/v1.8.14/#index_authorize) plugins).
+* Updated dependencies.
+
+### Compatibility changes
+
+* The `logconfig` setting is deprecated.
+
+#### For plugin authors
+
+* Etherpad now uses [jsdom](https://github.com/jsdom/jsdom) instead of
+  [cheerio](https://cheerio.js.org/) for processing HTML imports. There are two
+  consequences of this change:
+  * `require('ep_etherpad-lite/node_modules/cheerio')` no longer works. To fix,
+    your plugin should directly depend on `cheerio` and do `require('cheerio')`.
+  * The `collectContentImage` hook's `node` context property is now an
+    [`HTMLImageElement`](https://developer.mozilla.org/en-US/docs/Web/API/HTMLImageElement)
+    object rather than a Cheerio Node-like object, so the API is slightly
+    different. See
+    [citizenos/ep_image_upload#49](https://github.com/citizenos/ep_image_upload/pull/49)
+    for an example fix.
+* The `clientReady` server-side hook is deprecated; use the new `userJoin` hook
+  instead.
+* The `init_<pluginName>` server-side hooks are now run every time Etherpad
+  starts up, not just the first time after the named plugin is installed.
+* The `userLeave` server-side hook's context properties have changed:
+  * `auth`: Deprecated.
+  * `author`: Deprecated; use the new `authorId` property instead.
+  * `readonly`: Deprecated; use the new `readOnly` property instead.
+  * `rev`: Deprecated.
+* Changes to the `src/static/js/Changeset.js` library:
+  * `opIterator()`: The unused start index parameter has been removed, as has
+    the unused `lastIndex()` method on the returned object.
+  * `smartOpAssembler()`: The returned object's `appendOpWithText()` method is
+    deprecated without a replacement available to plugins (if you need one, let
+    us know and we can make the private `opsFromText()` function public).
+  * Several functions that should have never been public are no longer exported:
+    `applyZip()`, `assert()`, `clearOp()`, `cloneOp()`, `copyOp()`, `error()`,
+    `followAttributes()`, `opString()`, `stringOp()`, `textLinesMutator()`,
+    `toBaseTen()`, `toSplices()`.
+
+### Notable enhancements and fixes
+
+* Accessibility fix for JAWS screen readers.
+* Fixed "clear authorship" error (see issue #5128).
+* Etherpad now considers square brackets to be valid URL characters.
+* The server no longer crashes if an exception is thrown while processing a
+  message from a client.
+* The `useMonospaceFontGlobal` setting now works (thanks @Lastpixl!).
+* Chat improvements:
+  * The message input field is now a text area, allowing multi-line messages
+    (use shift-enter to insert a newline).
+  * Whitespace in chat messages is now preserved.
+* Docker improvements:
+  * New `HEALTHCHECK` instruction (thanks @Gared!).
+  * New `settings.json` variables: `DB_COLLECTION`, `DB_URL`,
+    `SOCKETIO_MAX_HTTP_BUFFER_SIZE`, `DUMP_ON_UNCLEAN_EXIT` (thanks
+    @JustAnotherArchivist!).
+  * `.ep_initialized` files are no longer created.
+* Worked around a [Firefox Content Security Policy
+  bug](https://bugzilla.mozilla.org/show_bug.cgi?id=1721296) that caused CSP
+  failures when `'self'` was in the CSP header. See issue #4975 for details.
+* UeberDB upgraded from v1.4.10 to v1.4.18. For details, see the [ueberDB
+  changelog](https://github.com/ether/ueberDB/blob/master/CHANGELOG.md).
+  Highlights:
+  * The `postgrespool` driver was renamed to `postgres`, replacing the old
+    driver of that name. If you used the old `postgres` driver, you may see an
+    increase in the number of database connections.
+  * For `postgres`, you can now set the `dbSettings` value in `settings.json` to
+    a connection string (e.g., `"postgres://user:password@host/dbname"`) instead
+    of an object.
+  * For `mongodb`, the `dbName` setting was renamed to `database` (but `dbName`
+    still works for backwards compatibility) and is now optional (if unset, the
+    database name in `url` is used).
+* `/admin/settings` now honors the `--settings` command-line argument.
+* Fixed "Author *X* tried to submit changes as author *Y*" detection.
+* Error message display improvements.
+* Simplified pad reload after importing an `.etherpad` file.
+
+#### For plugin authors
+
+* `clientVars` was added to the context for the `postAceInit` client-side hook.
+  Plugins should use this instead of the `clientVars` global variable.
+* New `userJoin` server-side hook.
+* The `userLeave` server-side hook has a new `socket` context property.
+* The `helper.aNewPad()` function (accessible to client-side tests) now
+  accepts hook functions to inject when opening a pad. This can be used to
+  test any new client-side hooks your plugin provides.
+* Chat improvements:
+  * The `chatNewMessage` client-side hook context has new properties:
+    * `message`: Provides access to the raw message object so that plugins can
+      see the original unprocessed message text and any added metadata.
+    * `rendered`: Allows plugins to completely override how the message is
+      rendered in the UI.
+  * New `chatSendMessage` client-side hook that enables plugins to process the
+    text before sending it to the server or augment the message object with
+    custom metadata.
+  * New `chatNewMessage` server-side hook to process new chat messages before
+    they are saved to the database and relayed to users.
+* Readability improvements to browser-side error stack traces.
+* Added support for socket.io message acknowledgments.
+
+# 1.8.14
+
+### Security fixes
+
+* Fixed a persistent XSS vulnerability in the Chat component. In case you can't
+  update to 1.8.14 directly, we strongly recommend to cherry-pick
+  a7968115581e20ef47a533e030f59f830486bdfa. Thanks to sonarsource for the
+  professional disclosure.
+
+### Compatibility changes
+
+* Node.js v12.13.0 or later is now required.
 * The `favicon` setting is now interpreted as a pathname to a favicon file, not
   a URL. Please see the documentation comment in `settings.json.template`.
 * The undocumented `faviconPad` and `faviconTimeslider` settings have been
@@ -28,12 +317,26 @@
     `${FOO:null}` to keep the current behavior.
   * The `DB_*` variable substitutions in `settings.json.docker` that previously
     defaulted to `null` now default to "undefined".
+* Calling `next` without argument when using `Changeset.opIterator` does always
+  return a new Op. See b9753dcc7156d8471a5aa5b6c9b85af47f630aa8 for details.
 
-### Notable enhancements
+### Notable enhancements and fixes
 
 * MySQL/MariaDB now uses connection pooling, which should improve stability and
   reduce latency.
 * Bulk database writes are now retried individually on write failure.
+* Minify: Avoid crash due to unhandled Promise rejection if stat fails.
+* padIds are now included in /socket.io query string, e.g.
+  `https://video.etherpad.com/socket.io/?padId=AWESOME&EIO=3&transport=websocket&t=...&sid=...`.
+  This is useful for directing pads to separate socket.io nodes.
+* <script> elements added via aceInitInnerdocbodyHead hook are now executed.
+* Fix read only pad access with authentication.
+* Await more db writes.
+* Disabled wtfnode dump by default.
+* Send `USER_NEWINFO` messages on reconnect.
+* Fixed loading in a hidden iframe.
+* Fixed a race condition with composition. (Thanks @ingoncalves for an
+  exceptionally detailed analysis and @rhansen for the fix.)
 
 # 1.8.13
 
@@ -60,11 +363,13 @@
 
 # 1.8.12
 
-Special mention: Thanks to Sauce Labs for additional testing tunnels to help us grow! :)
+Special mention: Thanks to Sauce Labs for additional testing tunnels to help us
+grow! :)
 
 ### Security patches
 
-* Fixed a regression in v1.8.11 which caused some pad names to cause Etherpad to restart.
+* Fixed a regression in v1.8.11 which caused some pad names to cause Etherpad to
+  restart.
 
 ### Notable fixes
 
@@ -73,8 +378,8 @@ Special mention: Thanks to Sauce Labs for additional testing tunnels to help us 
 * Fixed a regression in v1.8.8 that caused "Uncaught TypeError: Cannot read
   property '0' of undefined" with some plugins (#4885)
 * Less warnings in server console for supported element types on import.
-* Support Azure and other network share installations by using a 
-  more truthful relative path.
+* Support Azure and other network share installations by using a more truthful
+  relative path.
 
 ### Notable enhancements
 

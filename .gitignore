@@ -1,15 +1,15 @@
+/etherpad-win.exe
+/etherpad-win.zip
 node_modules
 /settings.json
 !settings.json.template
 APIKEY.txt
 SESSIONKEY.txt
-etherpad-lite-win.zip
 var/dirty.db
 *~
 *.patch
 npm-debug.log
 *.DS_Store
-.ep_initialized
 *.crt
 *.key
 credentials.json
